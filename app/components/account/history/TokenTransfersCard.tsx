@@ -5,19 +5,20 @@ import { ErrorCard } from '@components/common/ErrorCard';
 import { LoadingCard } from '@components/common/LoadingCard';
 import { Signature } from '@components/common/Signature';
 import { TokenInstructionType, Transfer, TransferChecked } from '@components/instruction/token/types';
-import { useAccountHistory } from '@providers/accounts';
+import { isTokenProgramData, useAccountHistory } from '@providers/accounts';
 import { useFetchAccountHistory } from '@providers/accounts/history';
 import { FetchStatus } from '@providers/cache';
 import { useCluster } from '@providers/cluster';
-import { useTokenRegistry } from '@providers/mints/token-registry';
 import { ParsedInstruction, ParsedTransactionWithMeta, PartiallyDecodedInstruction, PublicKey } from '@solana/web3.js';
 import { Cluster } from '@utils/cluster';
 import { normalizeTokenAmount } from '@utils/index';
 import { InstructionContainer } from '@utils/instruction';
-import { reportError } from '@utils/sentry';
 import React, { useMemo } from 'react';
 import Moment from 'react-moment';
 import { create } from 'superstruct';
+import useSWR from 'swr';
+
+import { getTokenInfo, getTokenInfoSwrKey } from '@/app/utils/token-info';
 
 import { getTransactionRows, HistoryCardFooter, HistoryCardHeader } from '../HistoryCardComponents';
 import { extractMintDetails, MintDetails } from './common';
@@ -28,17 +29,19 @@ type IndexedTransfer = {
     transfer: Transfer | TransferChecked;
 };
 
+async function fetchTokenInfo([_, address, cluster, url]: ['get-token-info', string, Cluster, string]) {
+    return await getTokenInfo(new PublicKey(address), cluster, url)
+}
+
 export function TokenTransfersCard({ address }: { address: string }) {
-    const { cluster } = useCluster();
+    const { cluster, url } = useCluster();
     const pubkey = useMemo(() => new PublicKey(address), [address]);
     const history = useAccountHistory(address);
     const fetchAccountHistory = useFetchAccountHistory();
     const refresh = () => fetchAccountHistory(pubkey, true, true);
     const loadMore = () => fetchAccountHistory(pubkey, true);
-
-    const { tokenRegistry } = useTokenRegistry();
-
-    const mintDetails = React.useMemo(() => tokenRegistry.get(address), [address, tokenRegistry]);
+    const swrKey = useMemo(() => getTokenInfoSwrKey(address, cluster, url), [address, cluster, url]);
+    const { data: tokenInfo, isLoading: tokenInfoLoading } = useSWR(swrKey, fetchTokenInfo);
 
     const transactionRows = React.useMemo(() => {
         if (history?.data?.fetched) {
@@ -109,8 +112,14 @@ export function TokenTransfersCard({ address }: { address: string }) {
                 let units = 'Tokens';
                 let amountString = '';
 
-                if (mintDetails?.symbol) {
-                    units = mintDetails.symbol;
+                // Loading token info, just don't show units
+                if (tokenInfoLoading) {
+                    units = '';
+                }
+
+                // Loaded symbol, use it
+                if (tokenInfo?.symbol) {
+                    units = tokenInfo.symbol;
                 }
 
                 if ('tokenAmount' in transfer) {
@@ -118,8 +127,8 @@ export function TokenTransfersCard({ address }: { address: string }) {
                 } else {
                     let decimals = 0;
 
-                    if (mintDetails?.decimals) {
-                        decimals = mintDetails.decimals;
+                    if (tokenInfo?.decimals) {
+                        decimals = tokenInfo.decimals;
                     } else if (mintMap.has(transfer.source.toBase58())) {
                         decimals = mintMap.get(transfer.source.toBase58())?.decimals || 0;
                     } else if (mintMap.has(transfer.destination.toBase58())) {
@@ -166,7 +175,7 @@ export function TokenTransfersCard({ address }: { address: string }) {
             detailsList,
             hasTimestamps,
         };
-    }, [history, transactionRows, mintDetails, pubkey, address, cluster]);
+    }, [history, transactionRows, tokenInfo, pubkey, address, cluster]);
 
     if (!history) {
         return null;
@@ -209,7 +218,7 @@ function getTransfer(
     cluster: Cluster,
     signature: string
 ): Transfer | TransferChecked | undefined {
-    if ('parsed' in instruction && instruction.program === 'spl-token') {
+    if ('parsed' in instruction && isTokenProgramData(instruction)) {
         try {
             const { type: rawType } = instruction.parsed;
             const type = create(rawType, TokenInstructionType);
@@ -221,7 +230,7 @@ function getTransfer(
             }
         } catch (error) {
             if (cluster === Cluster.MainnetBeta) {
-                reportError(error, {
+                console.error(error, {
                     signature,
                 });
             }

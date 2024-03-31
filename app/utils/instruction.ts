@@ -5,14 +5,14 @@ import {
     parseTokenLendingInstructionTitle,
 } from '@components/instruction/token-lending/types';
 import { isTokenSwapInstruction, parseTokenSwapInstructionTitle } from '@components/instruction/token-swap/types';
-import { TOKEN_PROGRAM_ID } from '@providers/accounts/tokens';
+import { isTokenProgramId } from '@providers/accounts/tokens';
 import {
     ConfirmedSignatureInfo,
     ParsedInstruction,
     ParsedTransactionWithMeta,
     PartiallyDecodedInstruction,
 } from '@solana/web3.js';
-import { reportError } from '@utils/sentry';
+import { isTokenProgram } from '@utils/programs';
 import { intoTransactionInstruction } from '@utils/tx';
 import { ParsedInfo } from '@validators/index';
 import { create } from 'superstruct';
@@ -65,7 +65,7 @@ export function getTokenProgramInstructionName(ix: ParsedInstruction, signatureI
         const type = create(rawType, TokenInstructionType);
         return IX_TITLES[type];
     } catch (err) {
-        reportError(err, { signature: signatureInfo.signature });
+        console.error(err, { signature: signatureInfo.signature });
         return 'Unknown';
     }
 }
@@ -83,7 +83,7 @@ export function getTokenInstructionName(
     }
 
     if ('parsed' in ix) {
-        if (ix.program === 'spl-token') {
+        if (isTokenProgram(ix.program)) {
             return getTokenProgramInstructionName(ix, signatureInfo);
         } else {
             return undefined;
@@ -100,12 +100,12 @@ export function getTokenInstructionName(
                 return parseTokenLendingInstructionTitle(transactionInstruction);
             }
         } catch (error) {
-            reportError(error, { signature: signatureInfo.signature });
+            console.error(error, { signature: signatureInfo.signature });
             return undefined;
         }
     }
 
-    if (ix.accounts.findIndex(account => account.equals(TOKEN_PROGRAM_ID)) >= 0) {
+    if (ix.accounts.findIndex(account => isTokenProgramId(account)) >= 0) {
         name = 'Unknown (Inner)';
     } else {
         return undefined;

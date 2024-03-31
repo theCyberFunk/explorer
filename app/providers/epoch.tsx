@@ -2,10 +2,11 @@
 
 import * as Cache from '@providers/cache';
 import { useCluster } from '@providers/cluster';
-import { Connection, EpochSchedule } from '@solana/web3.js';
+import { Connection } from '@solana/web3.js';
 import { Cluster } from '@utils/cluster';
-import { reportError } from '@utils/sentry';
 import React from 'react';
+
+import { EpochSchedule, getFirstSlotInEpoch, getLastSlotInEpoch } from '../utils/epoch-schedule';
 
 export enum FetchStatus {
     Fetching,
@@ -63,7 +64,7 @@ export async function fetchEpoch(
     url: string,
     cluster: Cluster,
     epochSchedule: EpochSchedule,
-    currentEpoch: number,
+    currentEpoch: bigint,
     epoch: number
 ) {
     dispatch({
@@ -78,15 +79,15 @@ export async function fetchEpoch(
 
     try {
         const connection = new Connection(url, 'confirmed');
-        const firstSlot = epochSchedule.getFirstSlotInEpoch(epoch);
-        const lastSlot = epochSchedule.getLastSlotInEpoch(epoch);
+        const firstSlot = getFirstSlotInEpoch(epochSchedule, BigInt(epoch));
+        const lastSlot = getLastSlotInEpoch(epochSchedule, BigInt(epoch));
         const [firstBlock, lastBlock] = await Promise.all([
             (async () => {
-                const firstBlocks = await connection.getBlocks(firstSlot, firstSlot + 100);
+                const firstBlocks = await connection.getBlocks(Number(firstSlot), Number(firstSlot + 100n));
                 return firstBlocks.shift();
             })(),
             (async () => {
-                const lastBlocks = await connection.getBlocks(Math.max(0, lastSlot - 100), lastSlot);
+                const lastBlocks = await connection.getBlocks(Math.max(0, Number(lastSlot - 100n)), Number(lastSlot));
                 return lastBlocks.pop();
             })(),
         ]);
@@ -112,7 +113,7 @@ export async function fetchEpoch(
     } catch (err) {
         status = FetchStatus.FetchFailed;
         if (cluster !== Cluster.Custom) {
-            reportError(err, { epoch: epoch.toString() });
+            console.error(err, { epoch: epoch.toString() });
         }
     }
 
@@ -133,7 +134,7 @@ export function useFetchEpoch() {
 
     const { cluster, url } = useCluster();
     return React.useCallback(
-        (key: number, currentEpoch: number, epochSchedule: EpochSchedule) =>
+        (key: number, currentEpoch: bigint, epochSchedule: EpochSchedule) =>
             fetchEpoch(dispatch, url, cluster, epochSchedule, currentEpoch, key),
         [dispatch, cluster, url]
     );

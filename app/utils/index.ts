@@ -16,10 +16,6 @@ export type SignatureProps = {
     signature: TransactionSignature;
 };
 
-export function assertUnreachable(_x: never): never {
-    throw new Error('Unreachable!');
-}
-
 export function normalizeTokenAmount(raw: string | number, decimals: number): number {
     let rawTokens: number;
     if (typeof raw === 'string') rawTokens = parseInt(raw);
@@ -101,17 +97,6 @@ export function wrap(input: string, length: number): string {
         input = input.substr(length);
     }
     return result.join('\n');
-}
-
-export function localStorageIsAvailable() {
-    const test = 'test';
-    try {
-        localStorage.setItem(test, test);
-        localStorage.removeItem(test);
-        return true;
-    } catch (e) {
-        return false;
-    }
 }
 
 export function camelToTitleCase(str: string): string {

@@ -12,18 +12,16 @@ import {
     parseTokenLendingInstructionTitle,
 } from '@components/instruction/token-lending/types';
 import { isTokenSwapInstruction, parseTokenSwapInstructionTitle } from '@components/instruction/token-swap/types';
+import { isTokenProgramData } from '@providers/accounts';
 import { useAccountHistories, useFetchAccountHistory } from '@providers/accounts/history';
-import { TOKEN_PROGRAM_ID, TokenInfoWithPubkey, useAccountOwnedTokens } from '@providers/accounts/tokens';
+import { isTokenProgramId, TokenInfoWithPubkey, useAccountOwnedTokens } from '@providers/accounts/tokens';
 import { CacheEntry, FetchStatus } from '@providers/cache';
 import { useCluster } from '@providers/cluster';
-import { useTokenRegistry } from '@providers/mints/token-registry';
 import { Details, useFetchTransactionDetails, useTransactionDetailsCache } from '@providers/transactions/parsed';
-import { TokenInfoMap } from '@solana/spl-token-registry';
 import { ConfirmedSignatureInfo, ParsedInstruction, PartiallyDecodedInstruction, PublicKey } from '@solana/web3.js';
 import { Cluster } from '@utils/cluster';
 import { INNER_INSTRUCTIONS_START_SLOT } from '@utils/index';
 import { getTokenProgramInstructionName } from '@utils/instruction';
-import { reportError } from '@utils/sentry';
 import { displayAddress, intoTransactionInstruction } from '@utils/tx';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -257,7 +255,6 @@ function TokenHistoryTable({ tokens }: { tokens: TokenInfoWithPubkey[] }) {
 
 const FilterDropdown = ({ filter, toggle, show, tokens }: FilterProps) => {
     const { cluster } = useCluster();
-    const { tokenRegistry } = useTokenRegistry();
     const currentSearchParams = useSearchParams();
     const currentPathname = usePathname();
     const buildLocation = useCallback(
@@ -281,7 +278,7 @@ const FilterDropdown = ({ filter, toggle, show, tokens }: FilterProps) => {
         const address = token.info.mint.toBase58();
         if (!nameLookup.has(address)) {
             filterOptions.push(address);
-            nameLookup.set(address, formatTokenName(address, cluster, tokenRegistry));
+            nameLookup.set(address, formatTokenName(address, cluster, token));
         }
     });
 
@@ -303,7 +300,7 @@ const FilterDropdown = ({ filter, toggle, show, tokens }: FilterProps) => {
                         >
                             {filterOption === ALL_TOKENS
                                 ? 'All Tokens'
-                                : formatTokenName(filterOption, cluster, tokenRegistry)}
+                                : nameLookup.get(filterOption) || filterOption}
                         </Link>
                     );
                 })}
@@ -395,7 +392,7 @@ const TokenTransactionRow = React.memo(function TokenTransactionRow({
                 }
 
                 if ('parsed' in ix) {
-                    if (ix.program === 'spl-token') {
+                    if (isTokenProgramData(ix)) {
                         name = getTokenProgramInstructionName(ix, tx);
                     } else {
                         return undefined;
@@ -404,32 +401,32 @@ const TokenTransactionRow = React.memo(function TokenTransactionRow({
                     try {
                         name = parseSerumInstructionTitle(transactionInstruction);
                     } catch (error) {
-                        reportError(error, { signature: tx.signature });
+                        console.error(error, { signature: tx.signature });
                         return undefined;
                     }
                 } else if (transactionInstruction && isTokenSwapInstruction(transactionInstruction)) {
                     try {
                         name = parseTokenSwapInstructionTitle(transactionInstruction);
                     } catch (error) {
-                        reportError(error, { signature: tx.signature });
+                        console.error(error, { signature: tx.signature });
                         return undefined;
                     }
                 } else if (transactionInstruction && isTokenLendingInstruction(transactionInstruction)) {
                     try {
                         name = parseTokenLendingInstructionTitle(transactionInstruction);
                     } catch (error) {
-                        reportError(error, { signature: tx.signature });
+                        console.error(error, { signature: tx.signature });
                         return undefined;
                     }
                 } else if (transactionInstruction && isMangoInstruction(transactionInstruction)) {
                     try {
                         name = parseMangoInstructionTitle(transactionInstruction);
                     } catch (error) {
-                        reportError(error, { signature: tx.signature });
+                        console.error(error, { signature: tx.signature });
                         return undefined;
                     }
                 } else {
-                    if (ix.accounts.findIndex(account => account.equals(TOKEN_PROGRAM_ID)) >= 0) {
+                    if (ix.accounts.findIndex(account => isTokenProgramId(account)) >= 0) {
                         name = 'Unknown (Inner)';
                     } else {
                         return undefined;
@@ -458,7 +455,7 @@ const TokenTransactionRow = React.memo(function TokenTransactionRow({
                         </td>
 
                         <td className="forced-truncate">
-                            <Address pubkey={mint} link truncateUnknown />
+                            <Address pubkey={mint} link truncateUnknown fetchTokenLabelInfo />
                         </td>
 
                         <td>
@@ -480,7 +477,7 @@ function InstructionDetails({ instructionType, tx }: { instructionType: Instruct
 
     const instructionTypes = instructionType.innerInstructions
         .map(ix => {
-            if ('parsed' in ix && ix.program === 'spl-token') {
+            if ('parsed' in ix && isTokenProgramData(ix)) {
                 return getTokenProgramInstructionName(ix, tx);
             }
             return undefined;
@@ -518,8 +515,8 @@ function InstructionDetails({ instructionType, tx }: { instructionType: Instruct
     );
 }
 
-function formatTokenName(pubkey: string, cluster: Cluster, tokenRegistry: TokenInfoMap): string {
-    let display = displayAddress(pubkey, cluster, tokenRegistry);
+function formatTokenName(pubkey: string, cluster: Cluster, tokenInfo: TokenInfoWithPubkey): string {
+    let display = displayAddress(pubkey, cluster, tokenInfo);
 
     if (display === pubkey) {
         display = display.slice(0, TRUNCATE_TOKEN_LENGTH) + '\u2026';

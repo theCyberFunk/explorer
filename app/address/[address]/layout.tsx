@@ -22,6 +22,7 @@ import { LoadingCard } from '@components/common/LoadingCard';
 import {
     Account,
     AccountsProvider,
+    isTokenProgramData,
     TokenProgramData,
     useAccountInfo,
     useFetchAccountInfo,
@@ -32,15 +33,18 @@ import isMetaplexNFT from '@providers/accounts/utils/isMetaplexNFT';
 import { useAnchorProgram } from '@providers/anchor';
 import { CacheEntry, FetchStatus } from '@providers/cache';
 import { useCluster } from '@providers/cluster';
-import { useTokenRegistry } from '@providers/mints/token-registry';
 import { PROGRAM_ID as ACCOUNT_COMPRESSION_ID } from '@solana/spl-account-compression';
 import { PublicKey } from '@solana/web3.js';
-import { ClusterStatus } from '@utils/cluster';
+import { Cluster, ClusterStatus } from '@utils/cluster';
 import { FEATURE_PROGRAM_ID } from '@utils/parseFeatureAccount';
 import { useClusterPath } from '@utils/url';
 import Link from 'next/link';
 import { redirect, useSelectedLayoutSegment } from 'next/navigation';
 import React, { PropsWithChildren } from 'react';
+import useSWRImmutable from 'swr/immutable';
+import { Base58EncodedAddress } from 'web3js-experimental';
+
+import { FullTokenInfo, getFullTokenInfo } from '@/app/utils/token-info';
 
 const IDENTICON_WIDTH = 64;
 
@@ -73,7 +77,7 @@ const TABS_LOOKUP: { [id: string]: Tab[] } = {
             title: 'Concurrent Merkle Tree',
         },
     ],
-    'spl-token:mint': [
+    'spl-token-2022:mint': [
         {
             path: 'transfers',
             slug: 'transfers',
@@ -84,10 +88,29 @@ const TABS_LOOKUP: { [id: string]: Tab[] } = {
             slug: 'instructions',
             title: 'Instructions',
         },
+    ],
+    'spl-token-2022:mint:metaplexNFT': [
         {
-            path: 'largest',
-            slug: 'largest',
-            title: 'Distribution',
+            path: 'metadata',
+            slug: 'metadata',
+            title: 'Metadata',
+        },
+        {
+            path: 'attributes',
+            slug: 'attributes',
+            title: 'Attributes',
+        },
+    ],
+    'spl-token:mint': [
+        {
+            path: 'transfers',
+            slug: 'transfers',
+            title: 'Transfers',
+        },
+        {
+            path: 'instructions',
+            slug: 'instructions',
+            title: 'Instructions',
         },
     ],
     'spl-token:mint:metaplexNFT': [
@@ -144,14 +167,19 @@ const TABS_LOOKUP: { [id: string]: Tab[] } = {
     ],
 };
 
-const TOKEN_TABS_HIDDEN = ['spl-token:mint', 'config', 'vote', 'sysvar', 'config'];
+const TOKEN_TABS_HIDDEN = ['spl-token:mint', 'spl-token-2022:mint', 'config', 'vote', 'sysvar', 'config'];
 
 type Props = PropsWithChildren<{ params: { address: string } }>;
 
+async function fetchFullTokenInfo([_, pubkey, cluster, url]: ['get-full-token-info', string, Cluster, string]) {
+    return await getFullTokenInfo(new PublicKey(pubkey), cluster, url);
+}
+
 function AddressLayoutInner({ children, params: { address } }: Props) {
     const fetchAccount = useFetchAccountInfo();
-    const { status } = useCluster();
+    const { status, cluster, url } = useCluster();
     const info = useAccountInfo(address);
+
     let pubkey: PublicKey | undefined;
 
     try {
@@ -159,6 +187,14 @@ function AddressLayoutInner({ children, params: { address } }: Props) {
     } catch (err) {
         /* empty */
     }
+
+    const infoStatus = info?.status;
+    const infoParsed = info?.data?.data.parsed;
+
+    const { data: fullTokenInfo, isLoading: isFullTokenInfoLoading } = useSWRImmutable(
+        infoStatus === FetchStatus.Fetched && infoParsed && isTokenProgramData(infoParsed) && pubkey ? ['get-full-token-info', address, cluster, url] : null,
+        fetchFullTokenInfo
+    );
 
     // Fetch account on load
     React.useEffect(() => {
@@ -171,13 +207,13 @@ function AddressLayoutInner({ children, params: { address } }: Props) {
         <div className="container mt-n3">
             <div className="header">
                 <div className="header-body">
-                    <AccountHeader address={address} account={info?.data} />
+                    <AccountHeader address={address} account={info?.data} tokenInfo={fullTokenInfo} isTokenInfoLoading={isFullTokenInfoLoading} />
                 </div>
             </div>
             {!pubkey ? (
                 <ErrorCard text={`Address "${address}" is not valid`} />
             ) : (
-                <DetailsSections info={info} pubkey={pubkey}>
+                <DetailsSections info={info} pubkey={pubkey} tokenInfo={fullTokenInfo} isTokenInfoLoading={isFullTokenInfoLoading}>
                     {children}
                 </DetailsSections>
             )}
@@ -193,12 +229,11 @@ export default function AddressLayout({ children, params }: Props) {
     );
 }
 
-function AccountHeader({ address, account }: { address: string; account?: Account }) {
-    const { tokenRegistry } = useTokenRegistry();
-    const tokenDetails = tokenRegistry.get(address);
+function AccountHeader({ address, account, tokenInfo, isTokenInfoLoading }: { address: string; account?: Account, tokenInfo?: FullTokenInfo, isTokenInfoLoading: boolean }) {
     const mintInfo = useMintAccountInfo(address);
+
     const parsedData = account?.data.parsed;
-    const isToken = parsedData?.program === 'spl-token' && parsedData?.parsed.type === 'mint';
+    const isToken = parsedData && isTokenProgramData(parsedData) && parsedData?.parsed.type === 'mint';
 
     if (isMetaplexNFT(parsedData, mintInfo) && parsedData.nftData) {
         return <MetaplexNFTHeader nftData={parsedData.nftData} address={address} />;
@@ -209,21 +244,23 @@ function AccountHeader({ address, account }: { address: string; account?: Accoun
         return <NFTokenAccountHeader account={account} />;
     }
 
-    if (isToken) {
+    if (isToken && !isTokenInfoLoading) {
         let token;
         let unverified = false;
 
         // Fall back to legacy token list when there is stub metadata (blank uri), updatable by default by the mint authority
-        if (!parsedData?.nftData?.metadata.data.uri && tokenDetails) {
-            token = tokenDetails;
+        if (!parsedData?.nftData?.metadata.data.uri && tokenInfo) {
+            token = tokenInfo;
         } else if (parsedData?.nftData) {
             token = {
                 logoURI: parsedData?.nftData?.json?.image,
                 name: parsedData?.nftData?.json?.name ?? parsedData?.nftData.metadata.data.name,
             };
-            unverified = true;
-        } else if (tokenDetails) {
-            token = tokenDetails;
+            if (!tokenInfo?.verified) {
+                unverified = true;
+            }
+        } else if (tokenInfo) {
+            token = tokenInfo;
         }
 
         return (
@@ -276,16 +313,20 @@ function DetailsSections({
     pubkey,
     tab,
     info,
+    tokenInfo,
+    isTokenInfoLoading
 }: {
     children: React.ReactNode;
     pubkey: PublicKey;
     tab?: string;
     info?: CacheEntry<Account>;
+    tokenInfo?: FullTokenInfo;
+    isTokenInfoLoading: boolean;
 }) {
     const fetchAccount = useFetchAccountInfo();
     const address = pubkey.toBase58();
 
-    if (!info || info.status === FetchStatus.Fetching) {
+    if (!info || info.status === FetchStatus.Fetching || isTokenInfoLoading) {
         return <LoadingCard />;
     } else if (info.status === FetchStatus.FetchFailed || info.data?.lamports === undefined) {
         return <ErrorCard retry={() => fetchAccount(pubkey, 'parsed')} text="Fetch Failed" />;
@@ -301,13 +342,13 @@ function DetailsSections({
     return (
         <>
             {FLAGGED_ACCOUNTS_WARNING[address] ?? null}
-            <InfoSection account={account} />
+            <InfoSection account={account} tokenInfo={tokenInfo} />
             <MoreSection tabs={tabComponents.map(({ component }) => component)}>{children}</MoreSection>
         </>
     );
 }
 
-function InfoSection({ account }: { account: Account }) {
+function InfoSection({ account, tokenInfo }: { account: Account, tokenInfo?: FullTokenInfo }) {
     const parsedData = account.data.parsed;
     const rawData = account.data.raw;
 
@@ -330,8 +371,8 @@ function InfoSection({ account }: { account: Account }) {
         );
     } else if (account.owner.toBase58() === NFTOKEN_ADDRESS) {
         return <NFTokenAccountSection account={account} />;
-    } else if (parsedData && parsedData.program === 'spl-token') {
-        return <TokenAccountSection account={account} tokenAccount={parsedData.parsed} />;
+    } else if (parsedData && isTokenProgramData(parsedData)) {
+        return <TokenAccountSection account={account} tokenAccount={parsedData.parsed} tokenInfo={tokenInfo} />;
     } else if (parsedData && parsedData.program === 'nonce') {
         return <NonceAccountSection account={account} nonceAccount={parsedData.parsed} />;
     } else if (parsedData && parsedData.program === 'vote') {
@@ -346,7 +387,7 @@ function InfoSection({ account }: { account: Account }) {
         parsedData.parsed.type === 'lookupTable'
     ) {
         return <AddressLookupTableAccountSection account={account} lookupTableAccount={parsedData.parsed.info} />;
-    } else if (rawData && isAddressLookupTableAccount(account.owner, rawData)) {
+    } else if (rawData && isAddressLookupTableAccount(account.owner.toBase58() as Base58EncodedAddress, rawData)) {
         return <AddressLookupTableAccountSection account={account} data={rawData} />;
     } else if (account.owner.toBase58() === FEATURE_PROGRAM_ID) {
         return <FeatureAccountSection account={account} />;
@@ -370,7 +411,6 @@ export type MoreTabs =
     | 'history'
     | 'tokens'
     | 'nftoken-collection-nfts'
-    | 'largest'
     | 'vote-history'
     | 'slot-hashes'
     | 'stake-history'
@@ -427,12 +467,12 @@ function getTabs(pubkey: PublicKey, account: Account): TabComponent[] {
     }
 
     // Add the key for address lookup tables
-    if (account.data.raw && isAddressLookupTableAccount(account.owner, account.data.raw)) {
+    if (account.data.raw && isAddressLookupTableAccount(account.owner.toBase58() as Base58EncodedAddress, account.data.raw)) {
         tabs.push(...TABS_LOOKUP['address-lookup-table']);
     }
 
     // Add the key for Metaplex NFTs
-    if (parsedData && programTypeKey === 'spl-token:mint' && (parsedData as TokenProgramData).nftData) {
+    if (parsedData && (programTypeKey === 'spl-token:mint' || programTypeKey == 'spl-token-2022:mint') && (parsedData as TokenProgramData).nftData) {
         tabs.push(...TABS_LOOKUP[`${programTypeKey}:metaplexNFT`]);
     }
 

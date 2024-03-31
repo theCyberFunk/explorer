@@ -2,7 +2,6 @@
 
 import { useCluster } from '@providers/cluster';
 import { Cluster, ClusterStatus } from '@utils/cluster';
-import { reportError } from '@utils/sentry';
 import React from 'react';
 import { createDefaultRpcTransport, createSolanaRpc } from 'web3js-experimental';
 
@@ -15,9 +14,9 @@ export enum Status {
 type Lamports = bigint;
 
 type Supply = Readonly<{
-    circulating: Lamports,
-    nonCirculating: Lamports,
-    total: Lamports,
+    circulating: Lamports;
+    nonCirculating: Lamports;
+    total: Lamports;
 }>;
 
 type State = Supply | Status | string;
@@ -52,7 +51,9 @@ async function fetch(dispatch: Dispatch, cluster: Cluster, url: string) {
         const transport = createDefaultRpcTransport({ url });
         const rpc = createSolanaRpc({ transport });
 
-        const supplyResponse = await rpc.getSupply({ commitment: 'finalized', excludeNonCirculatingAccountsList: true }).send();
+        const supplyResponse = await rpc
+            .getSupply({ commitment: 'finalized', excludeNonCirculatingAccountsList: true })
+            .send();
         const supply: Supply = {
             circulating: supplyResponse.value.circulating,
             nonCirculating: supplyResponse.value.nonCirculating,
@@ -66,7 +67,7 @@ async function fetch(dispatch: Dispatch, cluster: Cluster, url: string) {
         });
     } catch (err) {
         if (cluster !== Cluster.Custom) {
-            reportError(err, { url });
+            console.error(err, { url });
         }
         dispatch('Failed to fetch supply');
     }

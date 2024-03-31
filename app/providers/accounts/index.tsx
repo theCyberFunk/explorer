@@ -16,7 +16,7 @@ import {
 } from '@solana/web3.js';
 import { Cluster } from '@utils/cluster';
 import { pubkeyToString } from '@utils/index';
-import { reportError } from '@utils/sentry';
+import { assertIsTokenProgram, TokenProgram } from '@utils/programs';
 import { ParsedAddressLookupTableAccount } from '@validators/accounts/address-lookup-table';
 import { ConfigAccount } from '@validators/accounts/config';
 import { NonceAccount } from '@validators/accounts/nonce';
@@ -58,8 +58,16 @@ export type NFTData = {
     editionInfo: EditionInfo;
 };
 
+export function isTokenProgramData(data: { program: string }): data is TokenProgramData {
+    try {
+        assertIsTokenProgram(data.program);
+        return true;
+    } catch(e) {
+        return false;
+    }
+}
 export type TokenProgramData = {
-    program: 'spl-token';
+    program: TokenProgram;
     parsed: TokenAccount;
     nftData?: NFTData;
 };
@@ -250,7 +258,7 @@ async function fetchMultipleAccounts({
                         try {
                             parsedData = await handleParsedAccountData(connection, pubkey, accountData);
                         } catch (error) {
-                            reportError(error, { address: pubkey.toBase58(), url });
+                            console.error(error, { address: pubkey.toBase58(), url });
                         }
                     }
 
@@ -285,7 +293,7 @@ async function fetchMultipleAccounts({
             }
         } catch (error) {
             if (cluster !== Cluster.Custom) {
-                reportError(error, { url });
+                console.error(error, { url });
             }
 
             for (const pubkey of batch) {
@@ -375,7 +383,8 @@ async function handleParsedAccountData(
             };
         }
 
-        case 'spl-token': {
+        case 'spl-token':
+        case 'spl-token-2022': {
             const parsed = create(info, TokenAccount);
             let nftData;
 
@@ -485,13 +494,13 @@ export function useMintAccountInfo(address: string | undefined): MintAccountInfo
         try {
             const parsedData = account.data.parsed;
             if (!parsedData) return;
-            if (parsedData.program !== 'spl-token' || parsedData.parsed.type !== 'mint') {
+            if (!isTokenProgramData(parsedData) || parsedData.parsed.type !== 'mint') {
                 return;
             }
 
             return create(parsedData.parsed.info, MintAccountInfo);
         } catch (err) {
-            reportError(err, { address });
+            console.error(err, { address });
         }
     }, [address, accountInfo]);
 }
@@ -505,13 +514,13 @@ export function useTokenAccountInfo(address: string | undefined): TokenAccountIn
         try {
             const parsedData = account.data.parsed;
             if (!parsedData) return;
-            if (parsedData.program !== 'spl-token' || parsedData.parsed.type !== 'account') {
+            if (!isTokenProgramData(parsedData) || parsedData.parsed.type !== 'account') {
                 return;
             }
 
             return create(parsedData.parsed.info, TokenAccountInfo);
         } catch (err) {
-            reportError(err, { address });
+            console.error(err, { address });
         }
     }, [address, accountInfo]);
 }

@@ -5,7 +5,6 @@ import { ActionType, FetchStatus } from '@providers/cache';
 import { useCluster } from '@providers/cluster';
 import { Connection, SignatureResult, TransactionConfirmationStatus, TransactionSignature } from '@solana/web3.js';
 import { Cluster } from '@utils/cluster';
-import { reportError } from '@utils/sentry';
 import React from 'react';
 
 import { DetailsProvider } from './parsed';
@@ -92,7 +91,7 @@ export async function fetchTransactionStatus(
                 blockTime = await connection.getBlockTime(value.slot);
             } catch (error) {
                 if (cluster === Cluster.MainnetBeta && confirmations === 'max') {
-                    reportError(error, { slot: `${value.slot}` });
+                    console.error(error, { slot: `${value.slot}` });
                 }
             }
             const timestamp: Timestamp = blockTime !== null ? blockTime : 'unavailable';
@@ -109,7 +108,7 @@ export async function fetchTransactionStatus(
         fetchStatus = FetchStatus.Fetched;
     } catch (error) {
         if (cluster !== Cluster.Custom) {
-            reportError(error, { url });
+            console.error(error, { url });
         }
         fetchStatus = FetchStatus.FetchFailed;
     }
@@ -121,14 +120,6 @@ export async function fetchTransactionStatus(
         type: ActionType.Update,
         url,
     });
-}
-
-export function useTransactions() {
-    const context = React.useContext(StateContext);
-    if (!context) {
-        throw new Error(`useTransactions must be used within a TransactionsProvider`);
-    }
-    return context;
 }
 
 export function useTransactionStatus(
